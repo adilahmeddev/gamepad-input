@@ -2,12 +2,22 @@ package odin
 
 import "core:fmt"
 import "core:slice"
+import "core:strings"
 import rl "vendor:raylib"
+reduce :: slice.reduce
+mapper :: slice.mapper
+filter :: slice.filter
 
-buttonCombination :: struct {
-	buttons: [dynamic]rl.GamepadButton,
+ICON_SIZE :: 16
+WINDOW_WIDTH :: 1920
+WINDOW_HEIGHT :: 1080
+INPUT_HISTORY_SIZE :: 10
+
+ButtonCombination :: struct {
+	buttons: []rl.GamepadButton,
 	frames:  f64,
 }
+
 Input :: struct {
 	code: rl.GamepadButton,
 	name: cstring,
@@ -15,17 +25,15 @@ Input :: struct {
 	y:    int,
 }
 
-icon_size := 16
-
 buttons := [8]Input {
-	{code = .LEFT_FACE_UP, name = cstring("LEFT_FACE_UP"), x = 0, y = 1},
-	{code = .LEFT_FACE_LEFT, name = cstring("LEFT_FACE_LEFT"), x = 1, y = 1},
-	{code = .LEFT_FACE_DOWN, name = cstring("LEFT_FACE_DOWN"), x = 2, y = 1},
-	{code = .LEFT_FACE_RIGHT, name = cstring("LEFT_FACE_RIGHT"), x = 3, y = 1},
-	{code = .RIGHT_FACE_UP, name = cstring("RIGHT_FACE_UP"), x = 0, y = 0},
-	{code = .RIGHT_FACE_LEFT, name = cstring("RIGHT_FACE_LEFT"), x = 1, y = 0},
-	{code = .RIGHT_FACE_DOWN, name = cstring("RIGHT_FACE_DOWN"), x = 2, y = 0},
-	{code = .RIGHT_FACE_RIGHT, name = cstring("RIGHT_FACE_RIGHT"), x = 3, y = 0},
+	{code = .LEFT_FACE_UP, name = "LEFT_FACE_UP", x = 0, y = 1},
+	{code = .LEFT_FACE_LEFT, name = "LEFT_FACE_LEFT", x = 1, y = 1},
+	{code = .LEFT_FACE_DOWN, name = "LEFT_FACE_DOWN", x = 2, y = 1},
+	{code = .LEFT_FACE_RIGHT, name = "LEFT_FACE_RIGHT", x = 3, y = 1},
+	{code = .RIGHT_FACE_UP, name = "RIGHT_FACE_UP", x = 0, y = 0},
+	{code = .RIGHT_FACE_LEFT, name = "RIGHT_FACE_LEFT", x = 1, y = 0},
+	{code = .RIGHT_FACE_DOWN, name = "RIGHT_FACE_DOWN", x = 2, y = 0},
+	{code = .RIGHT_FACE_RIGHT, name = "RIGHT_FACE_RIGHT", x = 3, y = 0},
 }
 
 get_button :: proc(button: rl.GamepadButton) -> ^Input {
@@ -36,67 +44,141 @@ get_button :: proc(button: rl.GamepadButton) -> ^Input {
 	}
 	return nil
 }
+
+get_pressed_buttons :: proc() -> []rl.GamepadButton {
+	return filter(mapper(buttons[:], proc(input: Input) -> rl.GamepadButton {
+		return input.code
+	}), proc(button: rl.GamepadButton) -> bool {
+		return rl.IsGamepadButtonDown(0, button)
+	})
+}
+
+update_input_history :: proc(
+	inputs: ^[INPUT_HISTORY_SIZE]ButtonCombination,
+	current_buttons: []rl.GamepadButton,
+) {
+	last_input := &inputs[INPUT_HISTORY_SIZE - 1]
+
+	if !slice.equal(current_buttons[:], last_input.buttons[:]) {
+		for i := 0; i < INPUT_HISTORY_SIZE - 1; i += 1 {
+			inputs[i] = inputs[i + 1]
+		}
+
+		inputs[INPUT_HISTORY_SIZE - 1] = ButtonCombination {
+			buttons = current_buttons,
+			frames  = 1,
+		}
+	} else {
+		last_input.frames += 1
+	}
+}
+
+draw_button_icon :: proc(texture: rl.Texture2D, button: ^Input, x, y: f32) {
+	if button == nil do return
+
+	source_rect := rl.Rectangle {
+		x      = f32(button.x * ICON_SIZE),
+		y      = f32(button.y * ICON_SIZE),
+		width  = f32(ICON_SIZE),
+		height = f32(ICON_SIZE),
+	}
+
+	position := rl.Vector2{x, y}
+	rl.DrawTextureRec(texture, source_rect, position, rl.RAYWHITE)
+}
+
+draw_input_history :: proc(
+	icon_texture: rl.Texture2D,
+	inputs: [INPUT_HISTORY_SIZE]ButtonCombination,
+) {
+	for input, index in inputs {
+		y_pos := f32(660 - index * 70)
+
+		rl.DrawText(fmt.ctprintf("%.0f: ", input.frames), 20, i32(y_pos), 10, rl.RAYWHITE)
+
+		for button_code, button_index in input.buttons {
+			button := get_button(button_code)
+			if button == nil {
+				continue
+			}
+
+			x_pos := f32(40 + ICON_SIZE * button_index)
+			draw_button_icon(icon_texture, button, x_pos, y_pos)
+		}
+	}
+}
+copy_inputs :: proc(
+	inputs: [INPUT_HISTORY_SIZE]ButtonCombination,
+) -> [INPUT_HISTORY_SIZE]ButtonCombination {
+	copy := [INPUT_HISTORY_SIZE]ButtonCombination{}
+	for input, i in inputs {
+		copy[i].buttons = input.buttons
+	}
+	return copy
+
+}
 main :: proc() {
-	rl.InitWindow(1920, 1080, "pad - raylib")
+	rl.InitWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "Gamepad Input Display - Raylib")
+	defer rl.CloseWindow()
 	rl.SetTargetFPS(60)
-	icon_texture: rl.Texture2D = rl.LoadTexture("sprites/icons.png")
 
-	inputs := [10]buttonCombination{}
+	icon_texture := rl.LoadTexture("sprites/icons.png")
+	defer rl.UnloadTexture(icon_texture)
+
+
+	inputs := [INPUT_HISTORY_SIZE]ButtonCombination{}
 	for !rl.WindowShouldClose() {
-		output := cstring("")
-		padIsAvailable := rl.IsGamepadAvailable(0)
-		if padIsAvailable {
-			output = rl.GetGamepadName(0)
-			currentlyPressed := [dynamic]rl.GamepadButton{}
-			for button in buttons {
-				if rl.IsGamepadButtonDown(0, button.code) {
-					append(&currentlyPressed, button.code)
-				}
-			}
-			rl.SetWindowTitle(fmt.ctprintf("%v: (%s)", rl.GetFPS(), output))
-			if !slice.equal(currentlyPressed[:], inputs[9].buttons[:]) {
 
-				for i := 0; i < 9; i += 1 {
-					inputs[i] = inputs[i + 1]
-				}
-				inputs[9] = buttonCombination {
-					buttons = currentlyPressed,
-					frames  = 1,
-				}
-			} else {
-				inputs[9].frames += 1
-			}
+		old_inputs := copy_inputs(inputs)
+		if rl.IsGamepadAvailable(0) {
+			gamepad_name := rl.GetGamepadName(0)
+			rl.SetWindowTitle(fmt.ctprintf("FPS: %v | Gamepad: %s", rl.GetFPS(), gamepad_name))
 
+			current_buttons := get_pressed_buttons()
+
+			update_input_history(&inputs, current_buttons)
+
+			if !slice_eq(inputs, old_inputs, proc(a, b: ButtonCombination) -> bool {
+				return slice.equal(a.buttons, b.buttons)
+			}) {
+				pressed_button_names, err := filter(
+					mapper(inputs[:], proc(it: ButtonCombination) -> string {
+							return reduce(it.buttons, "", reduce_strings_fn)
+						}),
+					proc(s: string) -> bool {
+						return s != ""
+					},
+				)
+				assert(err == nil)
+				fmt.printfln("%#v", pressed_button_names)
+			}
+		} else {
+			rl.SetWindowTitle(fmt.ctprintf("FPS: %v | No gamepad detected", rl.GetFPS()))
 		}
 
 		rl.BeginDrawing()
+		defer rl.EndDrawing()
+
 		rl.ClearBackground(rl.LIGHTGRAY)
-		for input, index in inputs {
-			col := rl.RAYWHITE
-			i := i32(index)
-
-			for b, button_index in input.buttons {
-				button := get_button(b)
-				if button == nil {
-					fmt.printfln("button %#v is nil(%#v)", b, button)
-					continue
-				}
-				rl.DrawTextureRec(
-					icon_texture,
-					{
-						x = f32(button.x * icon_size),
-						y = f32(button.y * icon_size),
-						width = f32(icon_size),
-						height = f32(icon_size),
-					},
-					{f32(40 + icon_size * button_index), f32(660 - i * 70)},
-					rl.RAYWHITE,
-				)
-			}
-			rl.DrawText(fmt.ctprintf("%v: ", input.frames), 20, 660 - i * 70, 10, col)
-
-		}
-		rl.EndDrawing()
+		draw_input_history(icon_texture, inputs)
 	}
-	rl.CloseWindow()
+
+}
+
+slice_eq :: proc(a, b: [INPUT_HISTORY_SIZE]$E, cmp: proc(_, _: E) -> bool) -> bool {
+	if len(a) != len(b) {
+		return false
+	}
+	eq := true
+	for i := 0; i < len(a); i += 1 {
+		eq &= cmp(a[i], b[i])
+	}
+
+	return eq
+}
+
+reduce_strings_fn :: proc(acc: string, val: rl.GamepadButton) -> string {
+	builder, err := strings.builder_make()
+	assert(err == nil)
+	return fmt.sbprintf(&builder, "%s + %s", acc, get_button(val).name)
 }
