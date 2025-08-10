@@ -1,6 +1,9 @@
+#+feature dynamic-literals
 package odin
 
+import "base:intrinsics"
 import "core:fmt"
+import "core:reflect"
 import "core:slice"
 import "core:strings"
 import rl "vendor:raylib"
@@ -19,21 +22,20 @@ ButtonCombination :: struct {
 }
 
 Input :: struct {
-	code: rl.GamepadButton,
 	name: cstring,
 	x:    int,
 	y:    int,
 }
 
-buttons := [8]Input {
-	{.LEFT_FACE_UP, "LEFT_FACE_UP", 0, 1},
-	{.LEFT_FACE_LEFT, "LEFT_FACE_LEFT", 1, 1},
-	{.LEFT_FACE_DOWN, "LEFT_FACE_DOWN", 2, 1},
-	{.LEFT_FACE_RIGHT, "LEFT_FACE_RIGHT", 3, 1},
-	{.RIGHT_FACE_UP, "RIGHT_FACE_UP", 0, 0},
-	{.RIGHT_FACE_LEFT, "RIGHT_FACE_LEFT", 1, 0},
-	{.RIGHT_FACE_DOWN, "RIGHT_FACE_DOWN", 2, 0},
-	{.RIGHT_FACE_RIGHT, "RIGHT_FACE_RIGHT", 3, 0},
+buttons := map[rl.GamepadButton]Input {
+	.LEFT_FACE_UP     = {"LEFT_FACE_UP", 0, 1},
+	.LEFT_FACE_LEFT   = {"LEFT_FACE_LEFT", 1, 1},
+	.LEFT_FACE_DOWN   = {"LEFT_FACE_DOWN", 2, 1},
+	.LEFT_FACE_RIGHT  = {"LEFT_FACE_RIGHT", 3, 1},
+	.RIGHT_FACE_UP    = {"RIGHT_FACE_UP", 0, 0},
+	.RIGHT_FACE_LEFT  = {"RIGHT_FACE_LEFT", 1, 0},
+	.RIGHT_FACE_DOWN  = {"RIGHT_FACE_DOWN", 2, 0},
+	.RIGHT_FACE_RIGHT = {"RIGHT_FACE_RIGHT", 3, 0},
 }
 InputArray :: [INPUT_HISTORY_SIZE]ButtonCombination
 
@@ -81,20 +83,11 @@ main :: proc() {
 
 }
 
-
-get_button :: proc(button: rl.GamepadButton) -> ^Input {
-	for &b in buttons {
-		if b.code == button {
-			return &b
-		}
-	}
-	return nil
-}
-
 get_pressed_buttons :: proc() -> []rl.GamepadButton {
-	return filter(mapper(buttons[:], proc(input: Input) -> rl.GamepadButton {
-		return input.code
-	}), proc(button: rl.GamepadButton) -> bool {
+	btns, err := slice.map_keys(buttons)
+	assert(err == nil)
+
+	return filter(btns, proc(button: rl.GamepadButton) -> bool {
 		return rl.IsGamepadButtonDown(0, button)
 	})
 }
@@ -137,13 +130,13 @@ draw_input_history :: proc(icon_texture: rl.Texture2D, inputs: InputArray) {
 		rl.DrawText(fmt.ctprintf("%.0f: ", input.frames), 20, i32(y_pos), 10, rl.RAYWHITE)
 
 		for button_code, button_index in input.buttons {
-			button := get_button(button_code)
-			if button == nil {
+			button, ok := buttons[button_code]
+			if !ok {
 				continue
 			}
 
 			x_pos := 40 + f32(ICON_SIZE * button_index)
-			draw_button_icon(icon_texture, button, x_pos, y_pos)
+			draw_button_icon(icon_texture, &button, x_pos, y_pos)
 		}
 	}
 }
@@ -171,7 +164,7 @@ slice_eq :: proc(a, b: [INPUT_HISTORY_SIZE]$E, cmp: proc(_, _: E) -> bool) -> bo
 reduce_strings_fn :: proc(acc: string, val: rl.GamepadButton) -> string {
 	builder, err := strings.builder_make()
 	assert(err == nil)
-	return fmt.sbprintf(&builder, "%s + %s", acc, get_button(val).name)
+	return fmt.sbprintf(&builder, "%s + %s", acc, buttons[val].name)
 }
 
 button_combination_to_string :: proc(it: ButtonCombination) -> string {
